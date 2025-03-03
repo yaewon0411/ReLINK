@@ -6,7 +6,6 @@ import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.web.servlet.support.SpringBootServletInitializer;
 import org.springframework.scheduling.annotation.EnableAsync;
 
-@EnableAsync
 @SpringBootApplication
 public class ReLinkApplication extends SpringBootServletInitializer {
 

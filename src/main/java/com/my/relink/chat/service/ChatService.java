@@ -45,6 +45,7 @@ public class ChatService {
     private final S3Service s3Service;
     private final ImageRepository imageRepository;
     private final NotificationPublisherService notificationPublisherService;
+    private final MessageQueueService messageQueueService;
     private final Clock clock;
 
 
@@ -86,25 +87,19 @@ public class ChatService {
     }
 
     @Async
-    public CompletableFuture<Void> sendNotificationAsync(
-            Long senderId,
-            String content,
-            String senderNickname,
-            String itemName,
-            ChatStatus status) {
-        return CompletableFuture.runAsync(() ->
-                notificationPublisherService.crateChatNotification(
-                        senderId, content, senderNickname, itemName, status
-                )
-        );
+    public void sendNotificationAsync(Long senderId, String content, String senderNickname, String itemName, ChatStatus status) {
+        notificationPublisherService.crateChatNotification(senderId, content, senderNickname, itemName, status);
     }
 
 
     @Async
-    public CompletableFuture<Void> saveMessageAsync(Message message){
-        return CompletableFuture.runAsync(() -> {
+    public void saveMessageAsync(Message message){
+        try {
             messageRepository.save(message);
-        });
+        }catch (Exception e){
+            log.error("비동기 메시지 저장 실패: senderId: {}, tradeId: {}, messageTime: {}", message.getUser().getId(), message.getTrade().getId(), message.getMessageTime());
+            messageQueueService.saveSaveFailedMessage(message);
+        }
     }
 
 

@@ -3,6 +3,7 @@ package com.my.relink.chat.handler;
 import com.my.relink.chat.config.ChatPrincipal;
 import com.my.relink.chat.config.WebSocketSessionManager;
 import com.my.relink.chat.handler.metric.OperationMetrics;
+import com.my.relink.chat.service.ChatRetryService;
 import com.my.relink.config.security.AuthUser;
 import com.my.relink.config.security.jwt.JwtProvider;
 import com.my.relink.domain.trade.Trade;
@@ -44,6 +45,8 @@ public class StompHandler implements ChannelInterceptor {
     private final TradeService tradeService;
     private final Map<String, AtomicReference<OperationMetrics>> metricsMap = new ConcurrentHashMap<>();
     private final WebSocketSessionManager sessionManager;
+    private final static String SESSION_ATTRIBUTE_KEY = "USER_ID";
+    private final ChatRetryService chatRetryService;
 
 
 
@@ -65,10 +68,11 @@ public class StompHandler implements ChannelInterceptor {
         long startTime = System.currentTimeMillis();
 
         try {
-            if (StompCommand.CONNECT.equals(accessor.getCommand())) {
+            if (StompCommand.CONNECT.equals(accessor.getCommand())) { //사용자 인증 및 초기화
                 handleConnect(accessor);
                 recordMetrics("CONNECT", System.currentTimeMillis() - startTime);
-                sessionManager.addSession(accessor.getSessionId());
+            } else if(StompCommand.CONNECTED.equals(accessor.getCommand())){ //세션 저장
+                handleConnected(accessor);
             } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())){
                 handleSubscribe(accessor);
                 recordMetrics("SUBSCRIBE", System.currentTimeMillis() - startTime);
@@ -76,7 +80,7 @@ public class StompHandler implements ChannelInterceptor {
                 handleSend(accessor);
                 recordMetrics("SEND", System.currentTimeMillis() - startTime);
             } else if (StompCommand.DISCONNECT.equals(accessor.getCommand())){
-                sessionManager.removeSession(accessor.getSessionId());
+                handleDisconnect(accessor);
             }
             return message;
         }catch (BusinessException e){
@@ -118,6 +122,7 @@ public class StompHandler implements ChannelInterceptor {
         return MessageBuilder.createMessage(e.getMessage().getBytes(), headers);
     }
 
+
     /**
      * 채팅 시 거래 상태 검증
      * 1. 메시지를 전송하려는 채팅방의 tradeId 추출
@@ -137,6 +142,17 @@ public class StompHandler implements ChannelInterceptor {
 
 
     /**
+     * 세션 정보 제거
+     * @param accessor
+     */
+    private void handleDisconnect(StompHeaderAccessor accessor) {
+        String sessionId = accessor.getSessionId();
+        Long userId =  (Long) accessor.getSessionAttributes().get(SESSION_ATTRIBUTE_KEY);
+        sessionManager.removeSession(sessionId, userId);
+    }
+
+
+    /**
      * 초기 웹소켓 연결 시 토큰 및 거래 상태 검증
      *
      * 1. jwt 검증을 통한 사용자 인증
@@ -146,12 +162,30 @@ public class StompHandler implements ChannelInterceptor {
      */
     private void handleConnect(StompHeaderAccessor accessor){
         AuthUser authUser = validateToken(accessor);
+        Long userId = authUser.getId();
         String tradeStatus = accessor.getFirstNativeHeader(WebSocketHeader.TRADE_STATUS_HEADER);
         if(tradeStatus == null){
             throw new BusinessException(ErrorCode.TRADE_STATUS_NOT_FOUND);
         }
         validateTradeStatus(TradeStatus.statusOf(tradeStatus));
-        accessor.setUser(new ChatPrincipal(authUser));
+        accessor.setUser(new ChatPrincipal(authUser)); //웹소켓 연결 종료 시 자동으로 제거된다
+        Map<String, Object> prevSessionAttribute = sessionManager.recoverUserSession(userId);
+        if (prevSessionAttribute != null) {
+            accessor.setSessionAttributes(prevSessionAttribute); //세션 복원
+            chatRetryService.resendSendFailedMessages(userId);
+        }
+
+    }
+
+
+    /**
+     * 세션 정보 저장
+     * @param accessor
+     */
+    private void handleConnected(StompHeaderAccessor accessor) {
+        String sessionId = accessor.getSessionId();
+        AuthUser user = (AuthUser) accessor.getUser();
+        sessionManager.addSession(sessionId, user.getId(), accessor.getSessionAttributes());
     }
 
 
@@ -177,6 +211,7 @@ public class StompHandler implements ChannelInterceptor {
         }
     }
 
+
     /**
      * jwt 검증
      * TODO 추후 jwt 관련 예외 보충 예정
@@ -197,6 +232,7 @@ public class StompHandler implements ChannelInterceptor {
         return jwtProvider.getAuthUserForToken(token);
     }
 
+
     /**
      * 거래 상태 검증
      * EXCHANGED나 CANCELED, UNAVAILABLE 상태의 거래는 채팅 접근 불가능
@@ -211,6 +247,7 @@ public class StompHandler implements ChannelInterceptor {
             throw new BusinessException(ErrorCode.CHATROOM_ACCESS_DENIED);
         }
     }
+
 
     /**
      * STOMP destication 경로에서 tradeId 추출

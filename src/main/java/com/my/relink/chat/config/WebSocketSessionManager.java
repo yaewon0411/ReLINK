@@ -1,23 +1,47 @@
 package com.my.relink.chat.config;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@RequiredArgsConstructor
 public class WebSocketSessionManager {
-    private final Set<String> activeSessions = ConcurrentHashMap.newKeySet();
+    private final Cache<String, Map<String, Object>> sessionCache;
+    private final Cache<Long, String> userSessionCache;
 
-    public void addSession(String sessionId){
-        activeSessions.add(sessionId);
+    public void addSession(String sessionId, Long userId, Map<String, Object> sessionAttribute){
+        sessionCache.put(sessionId, sessionAttribute);
+        userSessionCache.put(userId, sessionId);
     }
 
-    public void removeSession(String sessionId){
-        activeSessions.remove(sessionId);
+    /**
+     * WebSocket 연결 끊김 시 세션 복구를 위해 사용
+     * @param userId
+     * @return
+     */
+    public Map<String, Object> recoverUserSession(Long userId) {
+        String sessionId = userSessionCache.getIfPresent(userId);
+        if(sessionId != null) {
+            return sessionCache.getIfPresent(sessionId);
+        }
+        return null;
     }
 
-    public int getActiveSessionCount(){
-        return activeSessions.size();
+    /**
+     * WebSocket 세션 정보 제거
+     *
+     * @param sessionId
+     * @param userId
+     */
+    public void removeSession(String sessionId, Long userId) {
+        sessionCache.invalidate(sessionId);
+        userSessionCache.invalidate(userId);
     }
+
+
 }

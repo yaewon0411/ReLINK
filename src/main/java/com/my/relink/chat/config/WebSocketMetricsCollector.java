@@ -41,7 +41,6 @@ public class WebSocketMetricsCollector {
                 .summaryStatistics();
 
         log.info("WebSocket Metrics - " +
-                        "활성 세션: {}, " +
                         "활성 스레드: {}, " +
                         "완료된 작업: {}, " +
                         "큐 크기: {}, " +
@@ -51,7 +50,6 @@ public class WebSocketMetricsCollector {
                         "최대 대기시간: {}ms, " +
                         "평균 처리시간: {}ms, " +
                         "최대 처리시간: {}ms",
-                sessionManager.getActiveSessionCount(),
                 webSocketTaskExecutor.getActiveCount(),
                 completedTasks,
                 webSocketTaskExecutor.getQueueSize(),

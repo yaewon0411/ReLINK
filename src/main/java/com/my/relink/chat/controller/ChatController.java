@@ -5,12 +5,14 @@ import com.my.relink.chat.controller.dto.request.ChatImageReqDto;
 import com.my.relink.chat.controller.dto.request.ChatMessageReqDto;
 import com.my.relink.chat.controller.dto.response.ChatImageRespDto;
 import com.my.relink.chat.controller.dto.response.ChatMessageRespDto;
+import com.my.relink.chat.service.ChatRetryService;
 import com.my.relink.chat.service.ChatService;
 import com.my.relink.util.api.ApiResult;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
 import org.springframework.messaging.handler.annotation.Payload;
@@ -28,6 +30,8 @@ public class ChatController {
 
     private final SimpMessageSendingOperations messagingTemplate;
     private final ChatService chatService;
+    private final ChatRetryService chatRetryService;
+    private final static String TOPIC_PATH = "/topic/chats/";
 
     @MessageMapping("/chats/{tradeId}/message")
     public void handleMessage(@DestinationVariable("tradeId") Long tradeId,
@@ -37,7 +41,11 @@ public class ChatController {
                         tradeId,
                         chatMessageReqDto,
                         ((ChatPrincipal)principal).getUserId());
-        messagingTemplate.convertAndSend("/topic/chats/" + tradeId, response);
+        try {
+            messagingTemplate.convertAndSend(TOPIC_PATH + tradeId, response);
+        } catch (MessagingException e){
+            chatRetryService.saveSendFailedMessage(TOPIC_PATH, response, tradeId);
+        }
     }
 
     @PostMapping(value = "/chats/{tradeId}/images", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
