@@ -1,10 +1,12 @@
 package com.my.relink.chat.service;
 
 import com.my.relink.chat.aop.metric.TimeMetric;
+import com.my.relink.chat.config.WebSocketSessionManager;
 import com.my.relink.chat.controller.dto.request.ChatImageReqDto;
 import com.my.relink.chat.controller.dto.request.ChatMessageReqDto;
 import com.my.relink.chat.controller.dto.response.ChatImageRespDto;
 import com.my.relink.chat.controller.dto.response.ChatMessageRespDto;
+import com.my.relink.chat.event.MessageSaveFailedEvent;
 import com.my.relink.common.notification.NotificationPublisherService;
 import com.my.relink.config.s3.S3Service;
 import com.my.relink.domain.image.EntityType;
@@ -23,9 +25,11 @@ import com.my.relink.service.UserService;
 import io.sentry.Sentry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -36,17 +40,15 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 @Slf4j
-@EnableAsync
 public class ChatService {
 
-    private final MessageRepository messageRepository;
     private final TradeService tradeService;
     private final UserService userService;
     private final S3Service s3Service;
     private final ImageRepository imageRepository;
     private final NotificationPublisherService notificationPublisherService;
-    private final MessageQueueService messageQueueService;
     private final Clock clock;
+    private final ChatRetryService chatRetryService;
 
 
     @Transactional
@@ -92,26 +94,16 @@ public class ChatService {
     }
 
 
-    @Async
-    public void saveMessageAsync(Message message){
-        try {
-            messageRepository.save(message);
-        }catch (Exception e){
-            log.error("비동기 메시지 저장 실패: senderId: {}, tradeId: {}, messageTime: {}", message.getUser().getId(), message.getTrade().getId(), message.getMessageTime());
-            messageQueueService.saveSaveFailedMessage(message);
-        }
-    }
 
 
     //메시지 저장 비동기 처리
-    @Transactional
     @TimeMetric
     public ChatMessageRespDto saveMessage(Long tradeId, ChatMessageReqDto chatMessageReqDto, Long senderId) {
         LocalDateTime messageTime = LocalDateTime.now(clock);
         User sender = userService.findByIdOrFail(senderId);
         TradeWithOwnerItemNameDto tradeInfo = tradeService.findTradeWithOwnerItemName(tradeId);
         Message message = chatMessageReqDto.toEntityWithCreateTime(tradeInfo.getTrade(), sender, messageTime);
-        saveMessageAsync(message);
+        chatRetryService.saveMessageAsync(message);
         sendNotificationAsync(
                 senderId,
                 chatMessageReqDto.getContent(),
@@ -119,6 +111,7 @@ public class ChatService {
                 tradeInfo.getItemName(),
                 ChatStatus.NEW_CHAT
         );
+
         return new ChatMessageRespDto(message);
     }
 

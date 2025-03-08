@@ -19,6 +19,20 @@ public class WebSocketSessionManager {
         userSessionCache.put(userId, sessionId);
     }
 
+    public void addLastMessageId(Long messageId, Long userId){
+        String sessionId = userSessionCache.getIfPresent(userId);
+        if (sessionId == null) {
+            return;
+        }
+        Map<String, Object> sessionAttribute = sessionCache.getIfPresent(sessionId);
+        if (sessionAttribute == null) {
+            return;
+        }
+        sessionAttribute.put("lastMessageId", messageId);
+        sessionCache.put(sessionId, sessionAttribute);
+    }
+
+
     /**
      * WebSocket 연결 끊김 시 세션 복구를 위해 사용
      * @param userId

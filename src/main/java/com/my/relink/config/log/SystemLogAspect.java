@@ -17,41 +17,41 @@ import java.util.UUID;
 @Slf4j
 public class SystemLogAspect {
 
-
-    @Around("@within(org.springframework.stereotype.Service) || " +
-            "@within(org.springframework.stereotype.Repository)")
-    public Object logSystemOperation(ProceedingJoinPoint joinPoint) throws Throwable {
-        String className = joinPoint.getTarget().getClass().getSimpleName();
-        String methodName = joinPoint.getSignature().getName();
-
-        Map<String, String> httpContext = MDC.getCopyOfContextMap();
-        String existingRequestId = HttpMDCContext.getRequestId();
-
-        try (SystemMDCContext context = new SystemMDCContext()) {
-            MDC.clear();
-            context.putComponent(className);
-            context.putOperation(methodName);
-            context.putRequestId(existingRequestId);
-
-            long startTime = System.currentTimeMillis();
-            log.info("Started: {}.{}", className, methodName);
-
-            Object result = joinPoint.proceed();
-
-            long duration = System.currentTimeMillis() - startTime;
-            context.putDuration(duration);
-            log.info("Completed: {}.{}", className, methodName);
-
-            return result;
-        } catch (Exception e) {
-            log.error("Failed: {}.{}, error: {}", className, methodName, e.getMessage(), e);
-            throw e;
-        } finally {
-            if(httpContext != null) {
-                MDC.setContextMap(httpContext);
-            } else {
-                MDC.clear();
-            }
-        }
-    }
+//
+//    @Around("@within(org.springframework.stereotype.Service) || " +
+//            "@within(org.springframework.stereotype.Repository)")
+//    public Object logSystemOperation(ProceedingJoinPoint joinPoint) throws Throwable {
+//        String className = joinPoint.getTarget().getClass().getSimpleName();
+//        String methodName = joinPoint.getSignature().getName();
+//
+//        Map<String, String> httpContext = MDC.getCopyOfContextMap();
+//        String existingRequestId = HttpMDCContext.getRequestId();
+//
+//        try (SystemMDCContext context = new SystemMDCContext()) {
+//            MDC.clear();
+//            context.putComponent(className);
+//            context.putOperation(methodName);
+//            context.putRequestId(existingRequestId);
+//
+//            long startTime = System.currentTimeMillis();
+//            log.info("Started: {}.{}", className, methodName);
+//
+//            Object result = joinPoint.proceed();
+//
+//            long duration = System.currentTimeMillis() - startTime;
+//            context.putDuration(duration);
+//            log.info("Completed: {}.{}", className, methodName);
+//
+//            return result;
+//        } catch (Exception e) {
+//            log.error("Failed: {}.{}, error: {}", className, methodName, e.getMessage(), e);
+//            throw e;
+//        } finally {
+//            if(httpContext != null) {
+//                MDC.setContextMap(httpContext);
+//            } else {
+//                MDC.clear();
+//            }
+//        }
+//    }
 }

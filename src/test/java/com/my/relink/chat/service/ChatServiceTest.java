@@ -4,6 +4,7 @@ import com.my.relink.chat.controller.dto.request.ChatImageReqDto;
 import com.my.relink.chat.controller.dto.request.ChatMessageReqDto;
 import com.my.relink.chat.controller.dto.response.ChatImageRespDto;
 import com.my.relink.chat.controller.dto.response.ChatMessageRespDto;
+import com.my.relink.chat.event.MessageSaveFailedEvent;
 import com.my.relink.common.notification.NotificationPublisherService;
 import com.my.relink.config.s3.S3Service;
 import com.my.relink.controller.trade.dto.response.TradeCompletionRespDto;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.multipart.MultipartFile;
@@ -66,6 +68,9 @@ class ChatServiceTest {
 
     @Mock
     private Clock clock;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
 
 
@@ -163,6 +168,23 @@ class ChatServiceTest {
                     );
                 });
             }
+
+//            @Test
+//            @DisplayName("비동기 메시지 저장 실패 시, 이벤트가 발행된다")
+//            void saveMessageAsync_publishes_MessageSaveFailedEvent() throws InterruptedException {
+//                ChatMessageRespDto result = chatService.saveMessage(tradeId, chatMessageReqDto, senderId);
+//
+//                Thread.sleep(500);
+//
+//                verify(eventPublisher).publishEvent(argThat((Object event) -> {
+//                    if (event instanceof MessageSaveFailedEvent) {
+//                        MessageSaveFailedEvent failedEvent = (MessageSaveFailedEvent) event;
+//                        return failedEvent.getMessage() != null;
+//                    }
+//                    return false;
+//                }));
+//            }
+
         }
 
         @DisplayName("실패 케이스")

@@ -16,7 +16,7 @@ public class CacheConfig {
     public CacheManager cacheManager() {
         CaffeineCacheManager cacheManager = new CaffeineCacheManager();
         cacheManager.setCaffeine(Caffeine.newBuilder()
-                .expireAfterWrite(5, TimeUnit.MINUTES)
+                .expireAfterAccess(5, TimeUnit.MINUTES)
                 .maximumSize(10_000)
                 .recordStats());
         return cacheManager;

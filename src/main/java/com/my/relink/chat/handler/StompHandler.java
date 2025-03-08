@@ -1,9 +1,14 @@
 package com.my.relink.chat.handler;
 
+import com.github.benmanes.caffeine.cache.Cache;
 import com.my.relink.chat.config.ChatPrincipal;
 import com.my.relink.chat.config.WebSocketSessionManager;
+import com.my.relink.chat.controller.ChatController;
+import com.my.relink.chat.controller.dto.response.ChatMessageRespDto;
+import com.my.relink.chat.event.MessageSendRetryEvent;
 import com.my.relink.chat.handler.metric.OperationMetrics;
 import com.my.relink.chat.service.ChatRetryService;
+import com.my.relink.chat.service.SendFailedManageService;
 import com.my.relink.config.security.AuthUser;
 import com.my.relink.config.security.jwt.JwtProvider;
 import com.my.relink.domain.trade.Trade;
@@ -15,6 +20,8 @@ import com.my.relink.service.TradeService;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.eclipse.jdt.internal.compiler.ast.MessageSend;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessageHeaders;
@@ -25,6 +32,7 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.stereotype.Component;
 
+import java.security.Principal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -46,9 +54,9 @@ public class StompHandler implements ChannelInterceptor {
     private final Map<String, AtomicReference<OperationMetrics>> metricsMap = new ConcurrentHashMap<>();
     private final WebSocketSessionManager sessionManager;
     private final static String SESSION_ATTRIBUTE_KEY = "USER_ID";
-    private final ChatRetryService chatRetryService;
-
-
+    private final ApplicationEventPublisher eventPublisher;
+    private final Cache<Long, List<Map<String, Object>>> sendFailedMessagesCache;
+    private final SendFailedManageService sendFailedManageService;
 
     /**
      * 소켓 연결 검증 핸들러
@@ -71,8 +79,6 @@ public class StompHandler implements ChannelInterceptor {
             if (StompCommand.CONNECT.equals(accessor.getCommand())) { //사용자 인증 및 초기화
                 handleConnect(accessor);
                 recordMetrics("CONNECT", System.currentTimeMillis() - startTime);
-            } else if(StompCommand.CONNECTED.equals(accessor.getCommand())){ //세션 저장
-                handleConnected(accessor);
             } else if (StompCommand.SUBSCRIBE.equals(accessor.getCommand())){
                 handleSubscribe(accessor);
                 recordMetrics("SUBSCRIBE", System.currentTimeMillis() - startTime);
@@ -87,6 +93,34 @@ public class StompHandler implements ChannelInterceptor {
             log.warn("웹소켓 연결 검증 중 오류 발생: {}", e.getMessage(), e);
             return createErrorMessage(accessor, e);
         }
+    }
+
+    /**
+     * STOMP 브로커가 메시지를 갖고 가는 데에는 성공했으나
+     * WebSocket의 갑작스러운 연결 끊김으로 최종 전달에 실패한 경우 발행에 실패한 메시지를
+     * 캐시에 보관하기 위해 사용한다
+     *
+     * (STOMP 브로커와의 연결에 문제가 생긴 경우는 ChatController의 handleMessage()에서 처리)
+     *
+     * @param message
+     * @param channel
+     * @param sent
+     * @param ex
+     */
+    @Override
+    public void afterSendCompletion(Message<?> message, MessageChannel channel, boolean sent, Exception ex) {
+        if(sent && ex == null){ //메시지 전송에 성공한 경우
+            return;
+        }
+        StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
+        if(accessor == null){
+            return;
+        }
+
+        String destination = accessor.getDestination();
+        ChatMessageRespDto payload = (ChatMessageRespDto) message.getPayload();
+        sendFailedManageService.saveSendFailedMessage(destination, payload);
+        log.warn("메시지 전송 실패로 인해 캐시에 저장됨-  userId: {}, destination: {}, error: {}", ((ChatPrincipal)accessor.getUser()).getUserId(), destination, ex.getMessage());
     }
 
     private void recordMetrics(String operation, long latency) {
@@ -131,18 +165,22 @@ public class StompHandler implements ChannelInterceptor {
      * @param accessor
      */
     private void handleSend(StompHeaderAccessor accessor){
-        String destination = accessor.getDestination();
-
-        if(destination != null && destination.startsWith("/app/chats")){
-            Long tradeId = extractTradeIdFromSendPath(destination);
-            TradeStatus tradeStatus = tradeService.findByIdOrFailWhenSend(tradeId);
-            validateTradeStatus(tradeStatus);
-        }
+//        String destination = accessor.getDestination();
+//
+//        if(destination != null && destination.startsWith("/app/chats")){
+//            Long tradeId = extractTradeIdFromSendPath(destination);
+//            TradeStatus tradeStatus = tradeService.findByIdOrFailWhenSend(tradeId);
+//            validateTradeStatus(tradeStatus);
+//        }
     }
 
 
     /**
      * 세션 정보 제거
+     *
+     * 비정상적인 연결 종료(네트워크 오류, 갑작스러운 종료 등) 발생 시
+     * Principal 정보가 무효화 처리 될 수 있기 때문에
+     * 세션에서 유저 ID를 가져와 제거
      * @param accessor
      */
     private void handleDisconnect(StompHeaderAccessor accessor) {
@@ -161,31 +199,36 @@ public class StompHandler implements ChannelInterceptor {
      * @param accessor
      */
     private void handleConnect(StompHeaderAccessor accessor){
-        AuthUser authUser = validateToken(accessor);
-        Long userId = authUser.getId();
-        String tradeStatus = accessor.getFirstNativeHeader(WebSocketHeader.TRADE_STATUS_HEADER);
-        if(tradeStatus == null){
-            throw new BusinessException(ErrorCode.TRADE_STATUS_NOT_FOUND);
+        System.out.println("연결 검증 시작");
+        String tokenWithPrefix = accessor.getFirstNativeHeader(WebSocketHeader.AUTH_HEADER);
+        if(tokenWithPrefix != null && tokenWithPrefix.startsWith("Bearer ")) {
+            String bearer = tokenWithPrefix.replace("Bearer", "");
+            System.out.println("bearer = " + bearer);
+            System.out.println("연결 성공");
+
+            String sessionId = accessor.getSessionId();
+            System.out.println(sessionId);
+            //AuthUser user = (AuthUser) accessor.getUser();
+            System.out.println("accessor = " + accessor.getSessionAttributes());
+            //sessionManager.addSession(sessionId, user.getId(), accessor.getSessionAttributes());
+        } else {
+            System.out.println("연결 실패");
         }
-        validateTradeStatus(TradeStatus.statusOf(tradeStatus));
-        accessor.setUser(new ChatPrincipal(authUser)); //웹소켓 연결 종료 시 자동으로 제거된다
-        Map<String, Object> prevSessionAttribute = sessionManager.recoverUserSession(userId);
-        if (prevSessionAttribute != null) {
-            accessor.setSessionAttributes(prevSessionAttribute); //세션 복원
-            chatRetryService.resendSendFailedMessages(userId);
-        }
 
-    }
+//        AuthUser authUser = validateToken(accessor);
+//        Long userId = authUser.getId();
+//        String tradeStatus = accessor.getFirstNativeHeader(WebSocketHeader.TRADE_STATUS_HEADER);
+//        if(tradeStatus == null){
+//            throw new BusinessException(ErrorCode.TRADE_STATUS_NOT_FOUND);
+//        }
+//        validateTradeStatus(TradeStatus.statusOf(tradeStatus));
+//        accessor.setUser(new ChatPrincipal(authUser)); //웹소켓 연결 종료 시 자동으로 제거된다
+//
+//        List<Map<String, Object>> sendFailedMessages = sendFailedMessagesCache.getIfPresent(userId);
+//        if(sendFailedMessages != null){
+//            eventPublisher.publishEvent(new MessageSendRetryEvent(userId));
+//        }
 
-
-    /**
-     * 세션 정보 저장
-     * @param accessor
-     */
-    private void handleConnected(StompHeaderAccessor accessor) {
-        String sessionId = accessor.getSessionId();
-        AuthUser user = (AuthUser) accessor.getUser();
-        sessionManager.addSession(sessionId, user.getId(), accessor.getSessionAttributes());
     }
 
 
@@ -199,16 +242,16 @@ public class StompHandler implements ChannelInterceptor {
      */
     private void handleSubscribe(StompHeaderAccessor accessor){
         String destination = accessor.getDestination();
-
-        if(destination != null && destination.startsWith("/topic/chats")){
-            Long tradeId = extractTradeIdFromSubscribePath(destination);
-            ChatPrincipal principal = (ChatPrincipal) accessor.getUser();
-            Trade trade = tradeService.findByIdWithUsersOrFail(tradeId);
-
-            trade.validateAccess(principal.getUserId());
-            validateTradeStatus(trade.getTradeStatus());
-            log.debug("해당 거래 채팅방 접근 검증 완료 - tradeId: {}, userId: {}", tradeId, principal.getUserId());
-        }
+//
+//        if(destination != null && destination.startsWith("/topic/chats")){
+//            Long tradeId = extractTradeIdFromSubscribePath(destination);
+//            ChatPrincipal principal = (ChatPrincipal) accessor.getUser();
+//            Trade trade = tradeService.findByIdWithUsersOrFail(tradeId);
+//
+//            trade.validateAccess(principal.getUserId());
+//            validateTradeStatus(trade.getTradeStatus());
+//            log.debug("해당 거래 채팅방 접근 검증 완료 - tradeId: {}, userId: {}", tradeId, principal.getUserId());
+//        }
     }
 
 
