@@ -165,13 +165,13 @@ public class StompHandler implements ChannelInterceptor {
      * @param accessor
      */
     private void handleSend(StompHeaderAccessor accessor){
-//        String destination = accessor.getDestination();
-//
-//        if(destination != null && destination.startsWith("/app/chats")){
-//            Long tradeId = extractTradeIdFromSendPath(destination);
-//            TradeStatus tradeStatus = tradeService.findByIdOrFailWhenSend(tradeId);
-//            validateTradeStatus(tradeStatus);
-//        }
+        String destination = accessor.getDestination();
+
+        if(destination != null && destination.startsWith("/app/chats")){
+            Long tradeId = extractTradeIdFromSendPath(destination);
+            TradeStatus tradeStatus = tradeService.findByIdOrFailWhenSend(tradeId);
+            validateTradeStatus(tradeStatus);
+        }
     }
 
 
@@ -199,35 +199,35 @@ public class StompHandler implements ChannelInterceptor {
      * @param accessor
      */
     private void handleConnect(StompHeaderAccessor accessor){
-        System.out.println("연결 검증 시작");
-        String tokenWithPrefix = accessor.getFirstNativeHeader(WebSocketHeader.AUTH_HEADER);
-        if(tokenWithPrefix != null && tokenWithPrefix.startsWith("Bearer ")) {
-            String bearer = tokenWithPrefix.replace("Bearer", "");
-            System.out.println("bearer = " + bearer);
-            System.out.println("연결 성공");
-
-            String sessionId = accessor.getSessionId();
-            System.out.println(sessionId);
-            //AuthUser user = (AuthUser) accessor.getUser();
-            System.out.println("accessor = " + accessor.getSessionAttributes());
-            //sessionManager.addSession(sessionId, user.getId(), accessor.getSessionAttributes());
-        } else {
-            System.out.println("연결 실패");
-        }
-
-//        AuthUser authUser = validateToken(accessor);
-//        Long userId = authUser.getId();
-//        String tradeStatus = accessor.getFirstNativeHeader(WebSocketHeader.TRADE_STATUS_HEADER);
-//        if(tradeStatus == null){
-//            throw new BusinessException(ErrorCode.TRADE_STATUS_NOT_FOUND);
-//        }
-//        validateTradeStatus(TradeStatus.statusOf(tradeStatus));
-//        accessor.setUser(new ChatPrincipal(authUser)); //웹소켓 연결 종료 시 자동으로 제거된다
+//        System.out.println("연결 검증 시작");
+//        String tokenWithPrefix = accessor.getFirstNativeHeader(WebSocketHeader.AUTH_HEADER);
+//        if(tokenWithPrefix != null && tokenWithPrefix.startsWith("Bearer ")) {
+//            String bearer = tokenWithPrefix.replace("Bearer", "");
+//            System.out.println("bearer = " + bearer);
+//            System.out.println("연결 성공");
 //
-//        List<Map<String, Object>> sendFailedMessages = sendFailedMessagesCache.getIfPresent(userId);
-//        if(sendFailedMessages != null){
-//            eventPublisher.publishEvent(new MessageSendRetryEvent(userId));
+//            String sessionId = accessor.getSessionId();
+//            System.out.println(sessionId);
+//            //AuthUser user = (AuthUser) accessor.getUser();
+//            System.out.println("accessor = " + accessor.getSessionAttributes());
+//            //sessionManager.addSession(sessionId, user.getId(), accessor.getSessionAttributes());
+//        } else {
+//            System.out.println("연결 실패");
 //        }
+
+        AuthUser authUser = validateToken(accessor);
+        Long userId = authUser.getId();
+        String tradeStatus = accessor.getFirstNativeHeader(WebSocketHeader.TRADE_STATUS_HEADER);
+        if(tradeStatus == null){
+            throw new BusinessException(ErrorCode.TRADE_STATUS_NOT_FOUND);
+        }
+        validateTradeStatus(TradeStatus.statusOf(tradeStatus));
+        accessor.setUser(new ChatPrincipal(authUser)); //웹소켓 연결 종료 시 자동으로 제거된다
+
+        List<Map<String, Object>> sendFailedMessages = sendFailedMessagesCache.getIfPresent(userId);
+        if(sendFailedMessages != null){
+            eventPublisher.publishEvent(new MessageSendRetryEvent(userId));
+        }
 
     }
 
@@ -242,16 +242,16 @@ public class StompHandler implements ChannelInterceptor {
      */
     private void handleSubscribe(StompHeaderAccessor accessor){
         String destination = accessor.getDestination();
-//
-//        if(destination != null && destination.startsWith("/topic/chats")){
-//            Long tradeId = extractTradeIdFromSubscribePath(destination);
-//            ChatPrincipal principal = (ChatPrincipal) accessor.getUser();
-//            Trade trade = tradeService.findByIdWithUsersOrFail(tradeId);
-//
-//            trade.validateAccess(principal.getUserId());
-//            validateTradeStatus(trade.getTradeStatus());
-//            log.debug("해당 거래 채팅방 접근 검증 완료 - tradeId: {}, userId: {}", tradeId, principal.getUserId());
-//        }
+
+        if(destination != null && destination.startsWith("/topic/chats")){
+            Long tradeId = extractTradeIdFromSubscribePath(destination);
+            ChatPrincipal principal = (ChatPrincipal) accessor.getUser();
+            Trade trade = tradeService.findByIdWithUsersOrFail(tradeId);
+
+            trade.validateAccess(principal.getUserId());
+            validateTradeStatus(trade.getTradeStatus());
+            log.debug("해당 거래 채팅방 접근 검증 완료 - tradeId: {}, userId: {}", tradeId, principal.getUserId());
+        }
     }
 
 
